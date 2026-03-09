@@ -100,10 +100,10 @@ if df_total is not None:
     res_26 = calcular("Tabela Vigente 01/04/2026")
     res_pl = calcular("Proposta PL 01/04/2026")
 
-    # --- 6. INTERFACE ---
+    # --- 6. INTERFACE COM AS TRÊS ABAS ---
     st.title("🏛️ Simulador Salarial MINC/IPHAN")
 
-    tab1, tab2 = st.tabs(["🎯 Calculadora Individual", "⚖️ Comparativo Cronológico"])
+    tab1, tab2, tab3 = st.tabs(["🎯 Calculadora Individual", "⚖️ Comparativo Cronológico", "📜 Legislação Aplicada"])
 
     with tab1:
         res = {"Tabela Vigente 01/01/2025": res_25, "Tabela Vigente 01/04/2026": res_26, "Proposta PL 01/04/2026": res_pl}[cenario_foco]
@@ -160,3 +160,22 @@ if df_total is not None:
             
             ganho_total = res_pl['LIQ'] - res_25['LIQ']
             st.success(f"📈 Ganho Acumulado (Hoje ➔ PL): **R$ {formatar_br(ganho_total)}**")
+
+    with tab3:
+        st.subheader("Base Normativa e Referências Legais")
+        st.write("Consulte os dispositivos legais que fundamentam os cálculos deste simulador:")
+
+        legislação = [
+            ["Lei nº 11.233/2005", "Plano Especial de Cargos da Cultura e alterações posteriores.", "https://www.planalto.gov.br/ccivil_03/_ato2004-2006/2005/lei/L11233.htm"],
+            ["Portaria MGI nº 2.897/2024", "Fixa o valor da Assistência Pré-Escolar (R$ 484,90).", "https://www.in.gov.br/en/web/dou/-/portaria-mgi-n-2.897-de-30-de-abril-de-2024-557088279"],
+            ["Termo de Acordo nº 08/2024", "PGPE e PECs Setoriais - propostas dos servidores federais.", "https://www.condsef.org.br/documentos/pgpe-pecs-setoriais-termo-acordo-n-08-2024"],
+            ["Portaria MGI nº 9.888/2025", "Fixa o valor mensal do auxílio-alimentação.", "https://www.in.gov.br/web/dou/-/portaria/mgi-n-9.888-de-6-de-novembro-de-2025-667427345"],
+            ["Lei nº 15.191/2025", "Modifica os valores da tabela progressiva mensal do IRPF.", "https://www.planalto.gov.br/ccivil_03/_Ato2023-2026/2025/Lei/L15191.htm"],
+            ["Lei nº 15.270/2025", "Zera o imposto de renda para rendimentos até R$ 5.000,00.", "https://www.planalto.gov.br/ccivil_03/_ato2023-2026/2025/lei/l15270.htm"],
+            ["Projeto de Lei nº 5.874/2025", "Proposta de reestruturação remuneratória (objeto da simulação).", "https://www25.senado.leg.br/web/atividade/materias/-/materia/172946"]
+        ]
+
+        for item in legislação:
+            st.markdown(f"**[{item[0]}]({item[2]})** — {item[1]}")
+    
+        st.info("Nota: Os cálculos de IRPF utilizam as projeções de isenção e faixas conforme as Leis 15.191 e 15.270 de 2025.")
