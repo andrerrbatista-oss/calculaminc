@@ -74,7 +74,7 @@ df_pl = carregar_dados_pl()
 # --- INTERFACE ---
 
 st.title("🔍 Calculadora Salarial MINC/IPHAN")
-st.subheader("Simulador: PL nº 5.874/2025 & Lei nº 15.270/2025")
+st.subheader("Simulador de valores com base PL nº 5.874/2025")
 
 if df_pl is None:
     st.error("Erro: Arquivos da Versão PL não encontrados (ex: tabela_superior(1).csv).")
