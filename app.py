@@ -6,6 +6,7 @@ import os
 st.set_page_config(page_title="Simulador Salarial IPHAN", layout="wide", page_icon="🏛️")
 
 def formatar_br(valor):
+    """Formata valores para R$ 1.234,56"""
     return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def limpar_valor(valor):
@@ -15,8 +16,9 @@ def limpar_valor(valor):
         except: return 0.0
     return float(valor) if valor is not None else 0.0
 
-# --- 2. CÁLCULOS TRIBUTÁRIOS (IRPF 2026 + REDUÇÃO LEI 15.270) ---
+# --- 2. CÁLCULOS TRIBUTÁRIOS (IRPF & REDUÇÃO LEI 15.270) ---
 def calcular_irpf(base_mensal, cenario_nome):
+    # Tabela Progressiva Padrão
     if base_mensal <= 2259.20: bruto, aliq = 0.0, 0.0
     elif base_mensal <= 2828.65: bruto, aliq = (base_mensal * 0.075) - 169.44, 7.5
     elif base_mensal <= 3751.05: bruto, aliq = (base_mensal * 0.15) - 381.44, 15.0
@@ -24,18 +26,18 @@ def calcular_irpf(base_mensal, cenario_nome):
     else: bruto, aliq = (base_mensal * 0.275) - 896.00, 27.5
     
     reducao = 0.0
-    # A redução de base só se aplica aos cenários de 2026 (Vigente e PL)
+    # Redução de base só se aplica a partir de 2026 (Vigente e PL)
     if "2026" in cenario_nome or "PL" in cenario_nome:
         if base_mensal <= 5000.00: reducao = min(312.89, bruto)
         elif base_mensal <= 7350.00: reducao = max(0.0, min(978.62 - (0.133145 * base_mensal), bruto))
     
     return max(0.0, bruto - reducao), aliq, reducao
 
-# --- 3. CARREGAMENTO DOS DADOS (INCLUINDO 2025) ---
+# --- 3. CARREGAMENTO DOS DADOS ---
 @st.cache_data
 def carregar_dados():
     niveis = {"SUPERIOR": "superior", "INTERMEDIÁRIO": "intermediario", "AUXILIAR": "auxiliar"}
-    # Adicionado o sufixo -2025
+    # Ordem definida aqui para o carregamento
     sufixos = {"-2025": "Vigente 2025", "-2026": "Vigente 2026", "-PL": "Proposta PL"}
     dfs = []
     for nome_n, prefixo in niveis.items():
@@ -52,16 +54,17 @@ def carregar_dados():
 
 df_total = carregar_dados()
 
-# --- 4. BARRA LATERAL ---
-st.sidebar.header("⚙️ Parâmetros de Simulação")
-vinculo = st.sidebar.radio("Vínculo", ["Ativo", "Aposentado/Pensionista"])
+# --- 4. BARRA LATERAL (PARÂMETROS) ---
+st.sidebar.header("⚙️ Configurações")
+vinculo = st.sidebar.radio("Situação", ["Ativo", "Aposentado/Pensionista"])
 nivel_sel = st.sidebar.selectbox("Nível", ["SUPERIOR", "INTERMEDIÁRIO", "AUXILIAR"])
 
 if df_total is not None:
     df_nivel = df_total[df_total['nivel_ref'] == nivel_sel]
     
-    # Nova opção de escolha de cenário principal para a Aba 1
-    cenario_foco = st.sidebar.selectbox("Cenário para Detalhamento", ["Proposta PL", "Vigente 2026", "Vigente 2025"])
+    # ORDEM PRIORITÁRIA DEFINIDA AQUI: 2025 -> 2026 -> PL
+    cenarios_ordem = ["Vigente 2025", "Vigente 2026", "Proposta PL"]
+    cenario_foco = st.sidebar.selectbox("Cenário para Detalhamento", cenarios_ordem)
     
     classe_sel = st.sidebar.selectbox("Classe", sorted(df_nivel['classe'].unique(), reverse=True))
     padrao_sel = st.sidebar.selectbox("Padrão", sorted(df_nivel[df_nivel['classe'] == classe_sel]['padrao'].unique()))
@@ -77,7 +80,7 @@ if df_total is not None:
     else:
         pontos = 50
 
-    # --- 5. PROCESSAMENTO DOS TRÊS CENÁRIOS ---
+    # --- 5. CÁLCULO DOS TRÊS MOMENTOS ---
     def calcular(nome_cenario):
         try:
             linha = df_nivel[(df_nivel['cenario_ref'] == nome_cenario) & 
@@ -99,38 +102,58 @@ if df_total is not None:
     res_26 = calcular("Vigente 2026")
     res_pl = calcular("Proposta PL")
 
-    # --- 6. INTERFACE PRINCIPAL ---
-    st.title("📊 Simulador Salarial IPHAN")
+    # --- 6. INTERFACE COM ABAS ---
+    st.title("🏛️ Simulador Salarial MINC/IPHAN")
 
-    tab1, tab2 = st.tabs(["🎯 Calculadora Individual", "⚖️ Quadro Comparativo (Triplo)"])
+    tab1, tab2 = st.tabs(["🎯 Calculadora Individual", "⚖️ Comparativo Cronológico"])
 
     with tab1:
-        res = {"Proposta PL": res_pl, "Vigente 2026": res_26, "Vigente 2025": res_25}[cenario_foco]
+        # Busca o resultado baseado na escolha da sidebar
+        res = {"Vigente 2025": res_25, "Vigente 2026": res_26, "Proposta PL": res_pl}[cenario_foco]
         
         if res:
-            st.subheader(f"Cenário: {cenario_foco}")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Bruto", f"R$ {formatar_br(res['BRUTO'])}")
-            c2.metric("IRPF", f"R$ {formatar_br(res['IR'])}")
-            c3.metric("Líquido", f"R$ {formatar_br(res['LIQ'])}")
+            st.subheader(f"Visão Detalhada: {cenario_foco}")
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Bruto", f"R$ {formatar_br(res['BRUTO'])}")
+            m2.metric("IRPF (Estimado)", f"R$ {formatar_br(res['IR'])}", 
+                      delta=f"- R$ {formatar_br(res['RED'])}" if res['RED'] > 0 else None, delta_color="inverse")
+            m3.metric("Líquido", f"R$ {formatar_br(res['LIQ'])}")
             
             st.markdown("---")
-            st.write(f"**Detalhamento ({nivel_sel} - {classe_sel}/{padrao_sel}):**")
-            st.info(f"Vencimento Básico: R$ {formatar_br(res['VB'])}  |  GDAC ({pontos} pts): R$ {formatar_br(res['GDAC'])}")
+            c_a, c_b = st.columns(2)
+            with c_a:
+                st.write("**Composição da Remuneração:**")
+                st.write(f"Vencimento Básico: R$ {formatar_br(res['VB'])}")
+                st.write(f"GDAC ({pontos} pts): R$ {formatar_br(res['GDAC'])}")
+                if res['ALIM'] > 0: st.write(f"Auxílio Alimentação: R$ {formatar_br(res['ALIM'])}")
+            with c_b:
+                st.write("**Tributação:**")
+                st.write(f"Alíquota Efetiva: {res['ALIQ']}%")
+                if res['RED'] > 0: st.info(f"Redução Lei 15.270 aplicada: R$ {formatar_br(res['RED'])}")
         else:
-            st.error("Dados deste cenário não encontrados.")
+            st.error("Dados não encontrados para o cenário selecionado.")
 
     with tab2:
-        st.subheader("Linha do Tempo: Evolução Salarial")
+        st.subheader("Evolução: 2025 → 2026 → PL")
         if res_25 and res_26 and res_pl:
-            dados_comp = [
+            # Tabela organizada por colunas temporais
+            tabela = [
                 ["Vencimento Básico", formatar_br(res_25['VB']), formatar_br(res_26['VB']), formatar_br(res_pl['VB'])],
                 ["GDAC", formatar_br(res_25['GDAC']), formatar_br(res_26['GDAC']), formatar_br(res_pl['GDAC'])],
-                ["Total Bruto", formatar_br(res_25['BRUTO']), formatar_br(res_26['BRUTO']), formatar_br(res_pl['BRUTO'])],
-                ["Líquido Final", f"**{formatar_br(res_25['LIQ'])}**", f"**{formatar_br(res_26['LIQ'])}**", f"**{formatar_br(res_pl['LIQ'])}**"]
+                ["Função/Saúde/Auxílios", 
+                 formatar_br(res_25['ALIM']+res_25['PRE']+res_25['FUNC']+res_25['SAUDE']), 
+                 formatar_br(res_26['ALIM']+res_26['PRE']+res_26['FUNC']+res_26['SAUDE']), 
+                 formatar_br(res_pl['ALIM']+res_pl['PRE']+res_pl['FUNC']+res_pl['SAUDE'])],
+                ["---", "---", "---", "---"],
+                ["TOTAL BRUTO", formatar_br(res_25['BRUTO']), formatar_br(res_26['BRUTO']), formatar_br(res_pl['BRUTO'])],
+                ["LÍQUIDO FINAL", f"**{formatar_br(res_25['LIQ'])}**", f"**{formatar_br(res_26['LIQ'])}**", f"**{formatar_br(res_pl['LIQ'])}**"]
             ]
-            df_comp = pd.DataFrame(dados_comp, columns=["Rubrica", "Jan/2025", "Abr/2026 (Vigente)", "Proposta PL"])
-            st.table(df_comp)
+            st.table(pd.DataFrame(tabela, columns=["Item", "Atual (2025)", "Garantido (2026)", "Proposta PL"]))
             
-            ganho_total = res_pl['LIQ'] - res_25['LIQ']
-            st.success(f"📈 O ganho acumulado entre HOJE e a PROPOSTA do PL é de **R$ {formatar_br(ganho_total)}** no líquido.")
+            # Cálculo de ganhos
+            ganho_26 = res_26['LIQ'] - res_25['LIQ']
+            ganho_pl = res_pl['LIQ'] - res_26['LIQ']
+            
+            c1, c2 = st.columns(2)
+            c1.info(f"Ganho 2025 ➔ 2026: R$ {formatar_br(ganho_26)}")
+            c2.success(f"Impacto Adicional PL: R$ {formatar_br(ganho_pl)}")
