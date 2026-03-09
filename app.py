@@ -2,14 +2,15 @@ import streamlit as st
 import pandas as pd
 import os
 
-# 1. Configuração da Página e Ícone (Lupa conforme solicitado)
+# 1. Configuração da Página e Ícones
 st.set_page_config(page_title="Calculadora Salarial MINC/IPHAN", page_icon="🔍", layout="wide")
 
-# --- FUNÇÕES DE FORMATAÇÃO E LIMPEZA ---
+# --- FUNÇÕES DE SUPORTE ---
 
 def limpar_valor(valor):
-    """Converte valores do CSV (ex: 1.234,56) para float."""
+    """Trata strings monetárias e converte para float."""
     if isinstance(valor, str):
+        # Remove R$, pontos de milhar e troca vírgula por ponto
         v = valor.replace('R$', '').replace('.', '').replace(',', '.').strip()
         try:
             return float(v)
@@ -18,7 +19,7 @@ def limpar_valor(valor):
     return float(valor) if valor is not None else 0.0
 
 def formatar_br(valor):
-    """Exibe no padrão brasileiro: 7.157,49"""
+    """Formata para o padrão brasileiro: 1.234,56"""
     return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 # --- CÁLCULO DE IRPF (LEI 15.270/2025) ---
@@ -38,40 +39,45 @@ def calcular_irpf_bruto(base_mensal):
     elif base_mensal <= 4664.68: return (base_mensal * 0.225) - 662.77, 22.5, 662.77
     else: return (base_mensal * 0.275) - 896.00, 27.5, 896.00
 
-# --- CARREGAMENTO ESPECIAL (DIVISÃO DE TABELAS LADO A LADO) ---
+# --- CARREGAMENTO ROBUSTO DOS DADOS ---
 
 @st.cache_data
 def carregar_dados_pl():
+    # Nomes dos arquivos conforme seu repositório
     arquivos = {
         "SUPERIOR": "tabela_superior(1).csv",
         "INTERMEDIÁRIO": "tabela_intermediario(1).csv",
         "AUXILIAR": "tabela_auxiliar(1).csv"
     }
     
+    colunas_padrao = ['classe', 'padrao', 'vb', 'gdac_unit', 'gdac_80', 'gdac_100', 'alim', 'ativo_80', 'ativo_100', 'gdac_50', 'apo_50']
     dfs_finais = []
     
     for nivel, path in arquivos.items():
         if os.path.exists(path):
-            # Lemos o CSV pulando a primeira linha de título
-            df_raw = pd.read_csv(path, sep=';', encoding='utf-8-sig', skiprows=1)
-            
-            # Parte 1: 2025 (Colunas 0 a 10)
-            df_25 = df_raw.iloc[:, 0:11].copy()
-            df_25.columns = ['classe', 'padrao', 'vb', 'gdac_unit', 'gdac_80', 'gdac_100', 'alim', 'ativo_80', 'ativo_100', 'gdac_50', 'apo_50']
-            df_25['vigencia'] = "2025"
-            df_25['nivel'] = nivel
-            
-            # Parte 2: 2026 (Colunas 12 a 22) - Pulamos a coluna 11 que costuma ser vazia
-            df_26 = df_raw.iloc[:, 12:23].copy()
-            df_26.columns = df_25.columns[:-2] # Copia os mesmos nomes (exceto vigencia e nivel)
-            df_26['vigencia'] = "2026"
-            df_26['nivel'] = nivel
-            
-            # Limpeza numérica
-            for df in [df_25, df_26]:
-                for col in ['vb', 'gdac_80', 'gdac_100', 'alim']:
-                    df[col] = df[col].apply(limpar_valor)
-                dfs_finais.append(df)
+            try:
+                # O segredo: sep=None e engine='python' detecta se é , ou ; sozinho
+                df_raw = pd.read_csv(path, sep=None, engine='python', encoding='utf-8-sig', skiprows=1)
+                
+                # Parte Esquerda (2025) - Colunas 0 a 10
+                df_25 = df_raw.iloc[:, 0:11].copy()
+                df_25.columns = colunas_padrao
+                df_25['vigencia'] = "2025"
+                df_25['nivel_data'] = nivel
+                
+                # Parte Direita (2026) - Colunas 12 a 22 (pulando a coluna vazia do meio)
+                df_26 = df_raw.iloc[:, 12:23].copy()
+                df_26.columns = colunas_padrao
+                df_26['vigencia'] = "2026"
+                df_26['nivel_data'] = nivel
+                
+                for df in [df_25, df_26]:
+                    # Limpa as colunas financeiras
+                    for col in ['vb', 'gdac_80', 'gdac_100', 'alim']:
+                        df[col] = df[col].apply(limpar_valor)
+                    dfs_finais.append(df)
+            except Exception as e:
+                st.error(f"Erro ao ler {path}: {e}")
                 
     return pd.concat(dfs_finais, ignore_index=True) if dfs_finais else None
 
@@ -83,42 +89,46 @@ st.title("🔍 Calculadora Salarial MINC/IPHAN")
 st.subheader("Simulador de valores com base PL nº 5.874/2025")
 
 if df_pl is None:
-    st.error("Erro: Arquivos 'tabela_...(1).csv' não encontrados na pasta.")
+    st.error("Erro crítico: Os arquivos CSV não foram encontrados ou estão com formato inválido.")
     st.stop()
 
-# Sidebar
-st.sidebar.header("Dados do Servidor")
+# Sidebar para seleção
+st.sidebar.header("Configuração")
 nivel_sel = st.sidebar.selectbox("Nível", ["SUPERIOR", "INTERMEDIÁRIO", "AUXILIAR"])
 ano_base = st.sidebar.radio("Ano de Referência", ["2025", "2026"])
 
-df_nivel = df_pl[df_pl['nivel'] == nivel_sel]
-classe_sel = st.sidebar.selectbox("Classe", sorted(df_nivel['classe'].unique(), reverse=True))
-padrao_sel = st.sidebar.selectbox("Padrão", sorted(df_nivel[df_nivel['classe'] == classe_sel]['padrao'].unique()))
-pontos_gdac = st.sidebar.select_slider("Pontos GDAC", options=[80, 100], value=80)
+# Filtragem dinâmica
+df_filtrado = df_pl[df_pl['nivel_data'] == nivel_sel]
+classe_sel = st.sidebar.selectbox("Classe", sorted(df_filtrado['classe'].unique(), reverse=True))
+padrao_sel = st.sidebar.selectbox("Padrão", sorted(df_filtrado[df_filtrado['classe'] == classe_sel]['padrao'].unique()))
+pontos_gdac = st.sidebar.select_slider("Pontos GDAC", options=[80, 100], value=100) # Padrão 100 para conferência
 
 valor_funcao = st.sidebar.number_input("Função Comissionada (R$)", min_value=0.0, step=100.0)
 tem_pre = st.sidebar.checkbox("Auxílio Pré-Escolar (+ R$ 321,00)")
 
-# --- CÁLCULOS ---
+# --- CÁLCULO FINAL ---
 
 try:
-    # Busca a linha exata no "banco de dados" fatiado
-    row = df_nivel[(df_nivel['classe'] == classe_sel) & 
-                   (df_nivel['padrao'] == padrao_sel) & 
-                   (df_nivel['vigencia'] == ano_base)].iloc[0]
+    # Localiza a linha específica
+    dados = df_filtrado[(df_filtrado['classe'] == classe_sel) & 
+                        (df_filtrado['padrao'] == padrao_sel) & 
+                        (df_filtrado['vigencia'] == ano_base)].iloc[0]
     
-    vb = row['vb']
-    gdac = row['gdac_80'] if pontos_gdac == 80 else row['gdac_100']
-    alim = row['alim']
+    vb = dados['vb']
+    gdac = dados['gdac_80'] if pontos_gdac == 80 else dados['gdac_100']
+    alim = dados['alim']
     pre = 321.0 if tem_pre else 0.0
     
+    # Soma do Bruto
     bruto = vb + gdac + alim + valor_funcao + pre
+    
+    # Cálculos de Imposto
     imp_bruto, aliq, _ = calcular_irpf_bruto(bruto)
     reducao = aplicar_reducao_art3a(bruto, imp_bruto) if ano_base == "2026" else 0.0
     ir_final = max(0.0, imp_bruto - reducao)
     liquido = bruto - ir_final
 
-    # Exibição
+    # Exibição dos resultados
     m1, m2, m3 = st.columns(3)
     m1.metric("Valor Mensal Bruto", f"R$ {formatar_br(bruto)}")
     m2.metric("IRPF Mensal Final", f"R$ {formatar_br(ir_final)}", 
@@ -126,25 +136,27 @@ try:
     m3.metric("Valor Mensal Líquido", f"R$ {formatar_br(liquido)}")
 
     st.markdown("---")
-    c1, c2 = st.columns(2)
-    with c1:
-        st.info("**Composição do Rendimento**")
+    col_inf, col_ir = st.columns(2)
+    
+    with col_inf:
+        st.info("**Detalhamento da Remuneração**")
         st.write(f"Vencimento Básico: R$ {formatar_br(vb)}")
         st.write(f"GDAC ({pontos_gdac} pts): R$ {formatar_br(gdac)}")
         st.write(f"Auxílio Alimentação: R$ {formatar_br(alim)}")
         if valor_funcao > 0: st.write(f"Função Comissionada: R$ {formatar_br(valor_funcao)}")
         if tem_pre: st.write(f"Auxílio Pré-Escolar: R$ 321,00")
-        st.markdown(f"**Total Bruto: R$ {formatar_br(bruto)}**")
-    with c2:
-        st.warning("**Detalhamento IRPF**")
+        st.markdown(f"**Total Bruto Calculado: R$ {formatar_br(bruto)}**")
+
+    with col_ir:
+        st.warning("**Detalhamento do Desconto (IRPF)**")
         st.write(f"Alíquota: {aliq}%")
         if ano_base == "2026":
-            st.success(f"Redução Lei 15.270: R$ {formatar_br(reducao)}")
-        st.markdown(f"**Imposto Retido: R$ {formatar_br(ir_final)}**")
+            st.success(f"Dedução Lei 15.270: R$ {formatar_br(reducao)}")
+        st.markdown(f"**Imposto Retido na Fonte: R$ {formatar_br(ir_final)}**")
 
-except Exception as e:
-    st.warning("Selecione os dados na lateral para calcular.")
+except IndexError:
+    st.warning("Dados não encontrados para esta combinação. Verifique os arquivos CSV.")
 
-# --- RODAPÉ ---
+# Rodapé
 st.markdown("---")
 st.markdown("<div style='text-align: center; color: #666; font-size: 0.85em;'>Elaboração: GT de Elaboração de Emendas e Comando de Acompanhamento da Negociação</div>", unsafe_allow_html=True)
