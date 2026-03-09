@@ -6,6 +6,7 @@ import os
 st.set_page_config(page_title="Simulador Salarial IPHAN", layout="wide", page_icon="🏛️")
 
 def formatar_br(valor):
+    """Formata valores para o padrão R$ 1.234,56"""
     return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 def limpar_valor(valor):
@@ -15,8 +16,44 @@ def limpar_valor(valor):
         except: return 0.0
     return float(valor) if valor is not None else 0.0
 
-# --- 2. CÁLCULOS TRIBUTÁRIOS ---
+# --- 2. MOTOR DE CÁLCULO TRIBUTÁRIO E PREVIDENCIÁRIO ---
+
+def calcular_pss(base_contribuicao, vinculo):
+    """Calcula PSS progressivo conforme Anexo III da Portaria nº 6/2025"""
+    # Se for aposentado, a base de cálculo é apenas o que excede o teto do RGPS
+    teto_rgps = 8157.41
+    if vinculo != "Ativo":
+        if base_contribuicao <= teto_rgps:
+            return 0.0
+        # A base para o cálculo progressivo no caso de aposentado é o excedente
+        base_calculo = base_contribuicao - teto_rgps
+    else:
+        base_calculo = base_contribuicao
+
+    faixas = [
+        (1518.00, 0.075),
+        (2793.88, 0.09),
+        (4190.83, 0.12),
+        (8157.41, 0.14),
+        (13969.49, 0.145),
+        (27938.95, 0.165),
+        (54480.97, 0.19),
+        (float('inf'), 0.22)
+    ]
+    
+    total_pss = 0.0
+    limite_anterior = 0.0
+    for limite, aliquota in faixas:
+        if base_calculo > limite_anterior:
+            base_na_faixa = min(base_calculo, limite) - limite_anterior
+            total_pss += base_na_faixa * aliquota
+            limite_anterior = limite
+        else:
+            break
+    return total_pss
+
 def calcular_irpf(base_mensal, cenario_nome):
+    """Tabela IRPF 2025/2026 com redução da Lei 15.270"""
     if base_mensal <= 2259.20: bruto, aliq = 0.0, 0.0
     elif base_mensal <= 2828.65: bruto, aliq = (base_mensal * 0.075) - 169.44, 7.5
     elif base_mensal <= 3751.05: bruto, aliq = (base_mensal * 0.15) - 381.44, 15.0
@@ -57,7 +94,6 @@ nivel_sel = st.sidebar.selectbox("Nível", ["SUPERIOR", "INTERMEDIÁRIO", "AUXIL
 
 if df_total is not None:
     df_nivel = df_total[df_total['nivel_ref'] == nivel_sel]
-    
     cenarios_ordem = ["Tabela Vigente 01/01/2025", "Tabela Vigente 01/04/2026", "Proposta PL 01/04/2026"]
     cenario_foco = st.sidebar.selectbox("Cenário para Detalhamento (Aba 1)", cenarios_ordem)
     
@@ -78,43 +114,39 @@ if df_total is not None:
     # --- 5. CÁLCULO ---
     def calcular(nome_cenario):
         try:
-            linha = df_nivel[(df_nivel['cenario_ref'] == nome_cenario) & 
-                             (df_nivel['classe'] == classe_sel) & 
-                             (df_nivel['padrao'] == padrao_sel)].iloc[0]
+            linha = df_nivel[(df_nivel['cenario_ref'] == nome_cenario) & (df_nivel['classe'] == classe_sel) & (df_nivel['padrao'] == padrao_sel)].iloc[0]
             vb = linha['vb']
             gdac = linha['gdac_80'] if pontos == 80 else (linha['gdac_100'] if pontos == 100 else linha['gdac_50'])
             alim = 1175.0 if vinculo == "Ativo" else 0.0
             
-            # Base do IR inclui apenas VB + GDAC + FUNÇÃO
-            base_irpf = vb + gdac + func_input
-            ir_v, aliq_v, red_v = calcular_irpf(base_irpf, nome_cenario)
+            # Base PSS e IRPF (Remuneração de cargo efetivo + função)
+            base_tributavel = vb + gdac + func_input
             
-            # Bruto Total
+            pss_v = calcular_pss(base_tributavel, vinculo)
+            ir_v, aliq_v, red_v = calcular_irpf(base_tributavel, nome_cenario)
+            
             bruto_v = vb + gdac + alim + func_input + pre_input + saude_input
+            liq_v = bruto_v - ir_v - pss_v
             
             return {"VB": vb, "GDAC": gdac, "ALIM": alim, "FUNC": func_input, "PRE": pre_input, 
-                    "SAUDE": saude_input, "BRUTO": bruto_v, "IR": ir_v, "LIQ": bruto_v - ir_v, "RED": red_v, "ALIQ": aliq_v}
+                    "SAUDE": saude_input, "BRUTO": bruto_v, "IR": ir_v, "PSS": pss_v, "LIQ": liq_v, "RED": red_v, "ALIQ": aliq_v}
         except: return None
 
     res_25 = calcular("Tabela Vigente 01/01/2025")
     res_26 = calcular("Tabela Vigente 01/04/2026")
     res_pl = calcular("Proposta PL 01/04/2026")
 
-    # --- 6. INTERFACE COM AS TRÊS ABAS ---
-    st.title("🏛️ Simulador Salarial MINC/IPHAN")
-
+    # --- 6. INTERFACE ---
     tab1, tab2, tab3 = st.tabs(["🎯 Calculadora Individual", "⚖️ Comparativo Cronológico", "📜 Legislação Aplicada"])
 
     with tab1:
         res = {"Tabela Vigente 01/01/2025": res_25, "Tabela Vigente 01/04/2026": res_26, "Proposta PL 01/04/2026": res_pl}[cenario_foco]
-        
         if res:
             st.subheader(f"Detalhamento: {cenario_foco}")
             m1, m2, m3 = st.columns(3)
             m1.metric("Bruto Total", f"R$ {formatar_br(res['BRUTO'])}")
-            m2.metric("IRPF Retido", f"R$ {formatar_br(res['IR'])}", 
-                      delta=f"- R$ {formatar_br(res['RED'])}" if res['RED'] > 0 else None, delta_color="inverse")
-            m3.metric("Líquido Estimado", f"R$ {formatar_br(res['LIQ'])}")
+            m2.metric("Total Deduções", f"R$ {formatar_br(res['IR'] + res['PSS'])}", help="Soma de IRPF + PSS")
+            m3.metric("Líquido Final", f"R$ {formatar_br(res['LIQ'])}")
             
             st.markdown("---")
             col_a, col_b = st.columns(2)
@@ -122,61 +154,43 @@ if df_total is not None:
                 st.write("**Composição da Remuneração:**")
                 st.write(f"Vencimento Básico: **R$ {formatar_br(res['VB'])}**")
                 st.write(f"GDAC ({pontos} pts): **R$ {formatar_br(res['GDAC'])}**")
-                if res['ALIM'] > 0:
-                    st.write(f"Auxílio Alimentação: **R$ {formatar_br(res['ALIM'])}**")
-                
-                # --- AQUI ESTAVA O PROBLEMA: ADICIONADAS AS VARIÁVEIS EXTERNAS ---
-                if res['FUNC'] > 0:
-                    st.write(f"Função Comissionada: **R$ {formatar_br(res['FUNC'])}**")
-                if res['PRE'] > 0:
-                    st.success(f"Auxílio Pré-Escolar: **R$ {formatar_br(res['PRE'])}**")
-                if res['SAUDE'] > 0:
-                    st.write(f"Ressarcimento Saúde: **R$ {formatar_br(res['SAUDE'])}**")
-
+                if res['ALIM'] > 0: st.write(f"Auxílio Alimentação: **R$ {formatar_br(res['ALIM'])}**")
+                if res['FUNC'] > 0: st.write(f"Função Comissionada: **R$ {formatar_br(res['FUNC'])}**")
+                if res['PRE'] > 0: st.success(f"Auxílio Pré-Escolar: **R$ {formatar_br(res['PRE'])}**")
+                if res['SAUDE'] > 0: st.write(f"Ressarcimento Saúde: **R$ {formatar_br(res['SAUDE'])}**")
             with col_b:
-                st.write("**Tributação:**")
-                st.write(f"Alíquota Aplicada: **{res['ALIQ']}%**")
-                if res['RED'] > 0:
-                    st.info(f"Redução Lei 15.270: **R$ {formatar_br(res['RED'])}**")
-        else:
-            st.error("Dados não encontrados.")
+                st.write("**Deduções (Impostos e Previdência):**")
+                st.write(f"Contribuição PSS: **R$ {formatar_br(res['PSS'])}**")
+                st.write(f"Imposto de Renda (IRPF): **R$ {formatar_br(res['IR'])}**")
+                if res['RED'] > 0: st.info(f"Redução Lei 15.270 aplicada: **R$ {formatar_br(res['RED'])}**")
 
     with tab2:
         st.subheader("Evolução: 01/01/2025 ➔ 01/04/2026 ➔ Proposta PL")
         if res_25 and res_26 and res_pl:
-            # Soma das rubricas variáveis para simplificar a tabela
-            def soma_vars(r): return r['ALIM'] + r['FUNC'] + r['PRE'] + r['SAUDE']
-            
             tabela = [
                 ["Vencimento Básico", formatar_br(res_25['VB']), formatar_br(res_26['VB']), formatar_br(res_pl['VB'])],
                 ["GDAC", formatar_br(res_25['GDAC']), formatar_br(res_26['GDAC']), formatar_br(res_pl['GDAC'])],
-                ["Auxílios / Função / Saúde", formatar_br(soma_vars(res_25)), formatar_br(soma_vars(res_26)), formatar_br(soma_vars(res_pl))],
+                ["Auxílios/Saúde/Função", formatar_br(res_25['ALIM']+res_25['PRE']+res_25['SAUDE']+res_25['FUNC']), formatar_br(res_26['ALIM']+res_26['PRE']+res_26['SAUDE']+res_26['FUNC']), formatar_br(res_pl['ALIM']+res_pl['PRE']+res_pl['SAUDE']+res_pl['FUNC'])],
                 ["---", "---", "---", "---"],
                 ["TOTAL BRUTO", formatar_br(res_25['BRUTO']), formatar_br(res_26['BRUTO']), formatar_br(res_pl['BRUTO'])],
+                ["PSS (Previdência)", f"- {formatar_br(res_25['PSS'])}", f"- {formatar_br(res_26['PSS'])}", f"- {formatar_br(res_pl['PSS'])}"],
                 ["IRPF Retido", f"- {formatar_br(res_25['IR'])}", f"- {formatar_br(res_26['IR'])}", f"- {formatar_br(res_pl['IR'])}"],
                 ["LÍQUIDO FINAL", f"**{formatar_br(res_25['LIQ'])}**", f"**{formatar_br(res_26['LIQ'])}**", f"**{formatar_br(res_pl['LIQ'])}**"]
             ]
             st.table(pd.DataFrame(tabela, columns=["Item", "Vigente 01/01/2025", "Vigente 01/04/2026", "Proposta PL 01/04/2026"]))
-            
-            ganho_total = res_pl['LIQ'] - res_25['LIQ']
-            st.success(f"📈 Ganho Acumulado (Hoje ➔ PL): **R$ {formatar_br(ganho_total)}**")
+            st.success(f"📈 Ganho Líquido Acumulado (Hoje ➔ PL): **R$ {formatar_br(res_pl['LIQ'] - res_25['LIQ'])}**")
 
     with tab3:
         st.subheader("Base Normativa e Referências Legais")
-        st.write("Consulte os dispositivos legais que fundamentam os cálculos deste simulador:")
-
         legislação = [
             ["Lei nº 11.233/2005", "Plano Especial de Cargos da Cultura e alterações posteriores.", "https://www.planalto.gov.br/ccivil_03/_ato2004-2006/2005/lei/L11233.htm"],
             ["Portaria MGI nº 2.897/2024", "Fixa o valor da Assistência Pré-Escolar.", "https://www.in.gov.br/en/web/dou/-/portaria-mgi-n-2.897-de-30-de-abril-de-2024-557088279"],
             ["Termo de Acordo nº 08/2024", "PGPE e PECs Setoriais - propostas dos servidores federais.", "https://www.condsef.org.br/documentos/pgpe-pecs-setoriais-termo-acordo-n-08-2024"],
-            ["Portaria Interministerial MPS/MF nº 6/2025", "Reajuste do Regulamento da Previdência Social.", "https://www.in.gov.br/en/web/dou/-/portaria-interministerial-mps/mf-n-6-de-10-de-janeiro-de-2025-606526848"],
+            ["Portaria Interministerial MPS/MF nº 6/2025", "Reajuste do Regulamento da Previdência Social e Alíquotas PSS.", "https://www.in.gov.br/en/web/dou/-/portaria-interministerial-mps/mf-n-6-de-10-de-janeiro-de-2025-606526848"],
             ["Portaria MGI nº 9.888/2025", "Fixa o valor mensal do auxílio-alimentação.", "https://www.in.gov.br/web/dou/-/portaria/mgi-n-9.888-de-6-de-novembro-de-2025-667427345"],
             ["Lei nº 15.191/2025", "Modifica os valores da tabela progressiva mensal do IRPF.", "https://www.planalto.gov.br/ccivil_03/_Ato2023-2026/2025/Lei/L15191.htm"],
             ["Lei nº 15.270/2025", "Zera o imposto de renda para rendimentos até R$ 5.000,00.", "https://www.planalto.gov.br/ccivil_03/_ato2023-2026/2025/lei/l15270.htm"],
-            ["Projeto de Lei nº 5.874/2025", "Proposta de reestruturação remuneratória (objeto da simulação).", "https://www25.senado.leg.br/web/atividade/materias/-/materia/172946"]
+            ["Projeto de Lei nº 5.874/2025", "Proposta de reestruturação remuneratória.", "https://www25.senado.leg.br/web/atividade/materias/-/materia/172946"]
         ]
-
         for item in legislação:
             st.markdown(f"**[{item[0]}]({item[2]})** — {item[1]}")
-    
-        st.info("Nota: Os cálculos de IRPF utilizam as projeções de isenção e faixas conforme as Leis 15.191 e 15.270 de 2025.")
