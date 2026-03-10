@@ -131,8 +131,10 @@ if df_total is not None:
             liq_v = bruto_v - ir_v - pss_v
             
             return {"VB": vb, "GDAC": gdac, "ALIM": alim, "FUNC": func_input, "PRE": pre_input, 
-                    "SAUDE": saude_input, "BRUTO": bruto_v, "IR": ir_v, "PSS": pss_v, "LIQ": li_v, "RED": red_v, "ALIQ": aliq_v}
-        except: return None
+                    "SAUDE": saude_input, "BRUTO": bruto_v, "IR": ir_v, "PSS": pss_v, "LIQ": liq_v, "RED": red_v, "ALIQ": aliq_v}
+        except Exception as e:
+            st.error(e)
+            return None
 
     res_25 = calcular("Tabela Vigente 01/01/2025")
     res_26 = calcular("Tabela Vigente 01/04/2026")
