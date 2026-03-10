@@ -3,7 +3,7 @@ import pandas as pd
 import os
 
 # --- 1. CONFIGURAÇÃO E SUPORTE ---
-st.set_page_config(page_title="Simulador Salarial IPHAN", layout="wide", page_icon="🏛️")
+st.set_page_config(page_title="Simulador Salarial MINC", layout="wide", page_icon="🏛️")
 
 def formatar_br(valor):
     """Formata valores para o padrão R$ 1.234,56"""
@@ -139,9 +139,11 @@ if df_total is not None:
     res_pl = calcular("Proposta PL 01/04/2026")
 
     # --- 6. INTERFACE ---
-    st.title("🏛️ Simulador Salarial MINC/IPHAN")
-    tab1, tab2, tab3 = st.tabs(["🎯 Calculadora Individual", "⚖️ Comparativo Cronológico", "📜 Legislação Aplicada"])
+    st.title("🏛️ Simulador Salarial MINC")
 
+    # Certifique-se de que a linha abaixo NÃO comece com #
+    tab1, tab2, tab3 = st.tabs(["🎯 Calculadora Individual", "⚖️ Comparativo Cronológico", "📜 Legislação Aplicada"])
+    
     with tab1:
         res = {"Tabela Vigente 01/01/2025": res_25, "Tabela Vigente 01/04/2026": res_26, "Proposta PL 01/04/2026": res_pl}[cenario_foco]
         if res:
