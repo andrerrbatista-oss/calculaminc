@@ -161,7 +161,7 @@ if df_total is not None:
             with col_b:
                 st.write("**Deduções (Impostos e Previdência):**")
                 st.write(f"Contribuição PSS: **R$ {formatar_br(res['PSS'])}**")
-                    st.caption("Valor aproximado tendo em vista o valor ser progressivo, podendo ser um pouco maior que o valor atual de seu desconto em folha.")
+                st.caption("Valor aproximado tendo em vista o valor ser progressivo, podendo ser um pouco maior que o valor atual de seu desconto em folha.")
                 st.write(f"Imposto de Renda (IRPF): **R$ {formatar_br(res['IR'])}**")
                 if res['RED'] > 0: st.info(f"Redução Lei 15.270 aplicada: **R$ {formatar_br(res['RED'])}**")
 
